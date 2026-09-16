@@ -12,7 +12,10 @@ from app.config import (
 class MicrophoneStream:
 
     def __init__(self):
-        self.queue = asyncio.Queue()
+
+        self.queue = asyncio.Queue(
+            maxsize=20
+        )
 
         self.chunk_size = int(
             SAMPLE_RATE * CHUNK_MS / 1000
@@ -25,17 +28,39 @@ class MicrophoneStream:
         indata,
         frames,
         time,
-        status
+        status,
     ):
-        if status:
-            print("Audio:", status)
 
-        audio = indata[:, 0].copy()
+        if status:
+            print("[Audio]", status)
+
+        audio = (
+            indata[:, 0]
+            .copy()
+            .astype(np.float32)
+        )
 
         self.loop.call_soon_threadsafe(
-            self.queue.put_nowait,
-            audio
+            self._put_audio,
+            audio,
         )
+
+    def _put_audio(
+        self,
+        audio: np.ndarray,
+    ):
+
+        try:
+            self.queue.put_nowait(
+                audio
+            )
+
+        except asyncio.QueueFull:
+
+            print(
+                "[Audio] Queue full - "
+                "dropping chunk"
+            )
 
     async def read(self):
 
@@ -47,12 +72,17 @@ class MicrophoneStream:
             callback=self.callback,
         ):
 
-            print("🎤 Microphone started")
+            print(
+                "🎙️ Microphone started"
+            )
 
             while True:
-                chunk = await self.queue.get()
+
+                chunk = (
+                    await self.queue.get()
+                )
 
                 yield np.asarray(
                     chunk,
-                    dtype=np.float32
+                    dtype=np.float32,
                 )

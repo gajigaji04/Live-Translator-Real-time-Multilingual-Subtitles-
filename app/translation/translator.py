@@ -1,7 +1,5 @@
 import aiohttp
 
-from openai import AsyncOpenAI
-
 from app.config import (
     TRANSLATION_PROVIDER,
     DEEPL_API_KEY,
@@ -10,86 +8,99 @@ from app.config import (
 )
 
 
-LANGUAGE_NAMES = {
-    "KO": "Korean",
-    "EN": "English",
-    "JA": "Japanese",
-    "ZH": "Chinese",
-}
-
-
 class Translator:
 
-    def __init__(self, target_language: str):
-
-        self.target_language = target_language.upper()
-
-        if TRANSLATION_PROVIDER == "openai":
-
-            self.client = AsyncOpenAI(
-                api_key=OPENAI_API_KEY
-            )
+    def __init__(self):
+        self.provider = (
+            TRANSLATION_PROVIDER.lower()
+        )
 
     async def translate(
         self,
         text: str,
-        source_language: str | None = None
-    ):
+        source_language: str,
+        target_language: str,
+    ) -> str:
 
-        if not text:
+        if not text.strip():
             return ""
 
+        # 같은 언어면 번역하지 않는다.
         if (
-            source_language
-            and source_language.upper()
-            == self.target_language
+            source_language.lower()
+            == target_language.lower()
         ):
             return text
 
-        if TRANSLATION_PROVIDER == "deepl":
+        if self.provider == "deepl":
             return await self._deepl(
                 text,
-                source_language
+                source_language,
+                target_language,
             )
 
-        if TRANSLATION_PROVIDER == "openai":
+        if self.provider == "openai":
             return await self._openai(
                 text,
-                source_language
+                source_language,
+                target_language,
             )
 
         raise ValueError(
             f"Unknown translation provider: "
-            f"{TRANSLATION_PROVIDER}"
+            f"{self.provider}"
         )
+
+    # =========================
+    # DeepL
+    # =========================
 
     async def _deepl(
         self,
         text: str,
-        source_language: str | None
-    ):
+        source_language: str,
+        target_language: str,
+    ) -> str:
 
-        url = "https://api-free.deepl.com/v2/translate"
+        if not DEEPL_API_KEY:
+            raise RuntimeError(
+                "DEEPL_API_KEY is not configured."
+            )
 
-        data = {
-            "text": text,
-            "target_lang": self.target_language,
-        }
-
-        if source_language:
-            data["source_lang"] = source_language.upper()
+        url = (
+            "https://api-free.deepl.com/v2/translate"
+        )
 
         headers = {
             "Authorization":
-                f"DeepL-Auth-Key {DEEPL_API_KEY}"
+                f"DeepL-Auth-Key {DEEPL_API_KEY}",
+            "Content-Type":
+                "application/x-www-form-urlencoded",
         }
 
-        async with aiohttp.ClientSession() as session:
+        data = {
+            "text": text,
+            "target_lang":
+                target_language.upper(),
+        }
+
+        if source_language:
+            data["source_lang"] = (
+                source_language.upper()
+            )
+
+        timeout = aiohttp.ClientTimeout(
+            total=10
+        )
+
+        async with aiohttp.ClientSession(
+            timeout=timeout
+        ) as session:
 
             async with session.post(
                 url,
-                data=data,
                 headers=headers,
+                data=data,
             ) as response:
 
                 if response.status != 200:
@@ -98,59 +109,99 @@ class Translator:
 
                     raise RuntimeError(
                         f"DeepL error: "
-                        f"{response.status} {body}"
+                        f"{response.status} "
+                        f"{body}"
                     )
 
                 result = await response.json()
 
-                return result[
-                    "translations"
-                ][0]["text"]
+                translations = result.get(
+                    "translations",
+                    [],
+                )
+
+                if not translations:
+                    return ""
+
+                return translations[0].get(
+                    "text",
+                    "",
+                )
+
+    # =========================
+    # OpenAI
+    # =========================
 
     async def _openai(
         self,
         text: str,
-        source_language: str | None
-    ):
+        source_language: str,
+        target_language: str,
+    ) -> str:
 
-        target = LANGUAGE_NAMES.get(
-            self.target_language,
-            self.target_language
-        )
-
-        source = (
-            LANGUAGE_NAMES.get(
-                source_language.upper()
+        if not OPENAI_API_KEY:
+            raise RuntimeError(
+                "OPENAI_API_KEY is not configured."
             )
-            if source_language
-            else "unknown"
+
+        url = (
+            "https://api.openai.com/v1/chat/completions"
         )
 
-        response = await self.client.chat.completions.create(
+        headers = {
+            "Authorization":
+                f"Bearer {OPENAI_API_KEY}",
+            "Content-Type":
+                "application/json",
+        }
 
-            model=OPENAI_MODEL,
+        prompt = (
+            f"Translate the following text from "
+            f"{source_language} to "
+            f"{target_language}.\n\n"
+            f"Return only the translation.\n\n"
+            f"Text:\n{text}"
+        )
 
-            temperature=0,
-
-            messages=[
-                {
-                    "role": "system",
-                    "content": (
-                        "You are a real-time subtitle "
-                        "translator. "
-                        "Translate naturally and concisely. "
-                        "Return only the translated text."
-                    ),
-                },
+        payload = {
+            "model": OPENAI_MODEL,
+            "messages": [
                 {
                     "role": "user",
-                    "content": (
-                        f"Source language: {source}\n"
-                        f"Target language: {target}\n\n"
-                        f"{text}"
-                    ),
-                },
+                    "content": prompt,
+                }
             ],
+            "temperature": 0,
+        }
+
+        timeout = aiohttp.ClientTimeout(
+            total=10
         )
 
-        return response.choices[0].message.content.strip()
+        async with aiohttp.ClientSession(
+            timeout=timeout
+        ) as session:
+
+            async with session.post(
+                url,
+                headers=headers,
+                json=payload,
+            ) as response:
+
+                if response.status != 200:
+
+                    body = await response.text()
+
+                    raise RuntimeError(
+                        f"OpenAI error: "
+                        f"{response.status} "
+                        f"{body}"
+                    )
+
+                result = await response.json()
+
+                return (
+                    result["choices"][0]
+                    ["message"]["content"]
+                    .strip()
+                )
