@@ -1100,7 +1100,7 @@ GPU Worker
 예:
 
 ```text
-MIT License
+Apache License
 ```
 
 또는 별도의 라이선스 파일을 추가할 수 있습니다.
