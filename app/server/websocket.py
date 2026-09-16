@@ -1,5 +1,5 @@
-import asyncio
 import json
+
 import websockets
 
 
@@ -8,9 +8,8 @@ class CaptionServer:
     def __init__(
         self,
         host: str,
-        port: int
+        port: int,
     ):
-
         self.host = host
         self.port = port
 
@@ -18,14 +17,13 @@ class CaptionServer:
 
     async def handler(
         self,
-        websocket
+        websocket,
     ):
-
         self.clients.add(websocket)
 
         print(
-            "Client connected:",
-            websocket.remote_address
+            f"[WebSocket] Client connected "
+            f"({len(self.clients)})"
         )
 
         try:
@@ -36,9 +34,27 @@ class CaptionServer:
 
             self.clients.discard(websocket)
 
+            print(
+                f"[WebSocket] Client disconnected "
+                f"({len(self.clients)})"
+            )
+
+    async def start(self):
+
+        await websockets.serve(
+            self.handler,
+            self.host,
+            self.port,
+        )
+
+        print(
+            f"WebSocket server: "
+            f"ws://{self.host}:{self.port}"
+        )
+
     async def broadcast(
         self,
-        data: dict
+        data: dict,
     ):
 
         if not self.clients:
@@ -46,26 +62,30 @@ class CaptionServer:
 
         message = json.dumps(
             data,
-            ensure_ascii=False
+            ensure_ascii=False,
         )
 
-        await asyncio.gather(
-            *[
-                client.send(message)
-                for client in self.clients
-            ],
-            return_exceptions=True
-        )
+        disconnected = set()
 
-    async def start(self):
+        for client in self.clients:
 
-        print(
-            f"WebSocket server: "
-            f"ws://{self.host}:{self.port}"
-        )
+            try:
 
-        return await websockets.serve(
-            self.handler,
-            self.host,
-            self.port,
-        )
+                await client.send(
+                    message
+                )
+
+            except Exception as error:
+
+                print(
+                    "[WebSocket] Send error:",
+                    error,
+                )
+
+                disconnected.add(client)
+
+        for client in disconnected:
+
+            self.clients.discard(
+                client
+            )
