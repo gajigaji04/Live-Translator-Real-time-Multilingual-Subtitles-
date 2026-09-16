@@ -1,7 +1,12 @@
 import os
+
 from dotenv import load_dotenv
 
 load_dotenv()
+
+DEEPL_API_KEY = os.getenv(
+    "DEEPL_API_KEY"
+)
 
 
 def get_bool(value: str, default: bool = False) -> bool:

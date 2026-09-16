@@ -1,24 +1,27 @@
 import asyncio
-import numpy as np
 
 from app.audio.microphone import (
-    MicrophoneStream
+    MicrophoneStream,
+)
+
+from app.audio.vad import (
+    SpeechSegmenter,
 )
 
 from app.stt.whisper import (
-    WhisperSTT
+    WhisperSTT,
 )
 
 from app.translation.translator import (
-    Translator
+    Translator,
 )
 
 from app.server.websocket import (
-    CaptionServer
+    CaptionServer,
 )
 
 from app.output.text_file import (
-    TextFileOutput
+    TextFileOutput,
 )
 
 from app.config import (
@@ -39,34 +42,55 @@ async def main():
 
     print("=" * 50)
 
+    # ---------------------
+    # STT
+    # ---------------------
+
     stt = WhisperSTT()
+
+    # ---------------------
+    # Translation
+    # ---------------------
 
     translator = Translator(
         TARGET_LANGUAGE
     )
 
+    # ---------------------
+    # Microphone
+    # ---------------------
+
     microphone = MicrophoneStream()
+
+    # ---------------------
+    # VAD
+    # ---------------------
+
+    segmenter = SpeechSegmenter(
+        sample_rate=16000,
+        threshold=0.01,
+        min_speech_ms=250,
+        min_silence_ms=400,
+    )
+
+    # ---------------------
+    # Output
+    # ---------------------
 
     output = TextFileOutput(
         CAPTION_FILE
     )
 
+    # ---------------------
+    # WebSocket
+    # ---------------------
+
     server = CaptionServer(
         WS_HOST,
-        WS_PORT
+        WS_PORT,
     )
 
     await server.start()
-
-    audio_buffer = []
-
-    buffer_seconds = 2.0
-
-    sample_rate = 16000
-
-    max_samples = int(
-        buffer_seconds * sample_rate
-    )
 
     print(
         f"Target language: "
@@ -75,23 +99,18 @@ async def main():
 
     print("Listening...")
 
+    # ---------------------
+    # Audio Pipeline
+    # ---------------------
+
     async for chunk in microphone.read():
 
-        audio_buffer.append(chunk)
-
-        current_samples = sum(
-            len(x)
-            for x in audio_buffer
+        segment = segmenter.process(
+            chunk
         )
 
-        if current_samples < max_samples:
+        if segment is None:
             continue
-
-        audio = np.concatenate(
-            audio_buffer
-        )
-
-        audio_buffer.clear()
 
         # ---------------------
         # STT
@@ -99,7 +118,7 @@ async def main():
 
         result = await asyncio.to_thread(
             stt.transcribe,
-            audio
+            segment,
         )
 
         text = result["text"]
@@ -123,7 +142,7 @@ async def main():
         translated = (
             await translator.translate(
                 text,
-                source_language
+                source_language,
             )
         )
 
